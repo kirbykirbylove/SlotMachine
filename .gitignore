@@ -1,0 +1,7 @@
+build/ 
+temp/ 
+local/ 
+library/ 
+.settings/ 
+.logs/ 
+.vscode/
