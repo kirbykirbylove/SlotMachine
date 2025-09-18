@@ -1,4 +1,4 @@
-// GameManager.ts - 修正即停功能和自然結果展演
+// GameManager.ts - 修正版（符合需求：無彈跳效果、即按 STOP 立即生效、只有三軸全部完成才呈現連線結果）
 import { _decorator, Component, Sprite, SpriteFrame, EditBox, Button, Label } from 'cc';
 import { Reel } from './Reel';
 import { UIManager } from './UIManager';
@@ -13,7 +13,7 @@ export class GameManager extends Component {
     public reels: Reel[] = []; // 3 個 Reel
 
     @property([Sprite])
-    public cells: Sprite[] = []; // 用於連線檢查的顯示
+    public cells: Sprite[] = []; // 用於連線檢查的顯示（全局 3x3）
 
     @property([SpriteFrame])
     public spriteFrames: SpriteFrame[] = [];
@@ -38,13 +38,13 @@ export class GameManager extends Component {
     public startDelayBetweenReels = 0.3; // 每軸啟動的延遲（秒）
 
     @property
-    public stopDelayBetweenReels = 0.4; // 每軸停止的延遲（秒）
+    public stopDelayBetweenReels = 0.4; // 每軸停止的延遲（秒），自動停用
 
     @property
-    public reelSpinDuration = 3.0; // Reel 滾動持續時間
+    public reelSpinDuration = 3.0; // Reel 滾動持續時間（目前 Reel 內部自己控制）
 
     @property
-    public autoStopDelay = 2.0; // 自動停止延遲
+    public autoStopDelay = 2.0; // 自動停止延遲（若玩家不按 STOP）
 
     // 內部狀態
     private isSpinning = false;
@@ -58,6 +58,7 @@ export class GameManager extends Component {
         console.log('[GameManager] GameManager 初始化開始');
 
         if (this.spinButton) {
+            this.spinButton.node.setSiblingIndex(-1); // 第一層
             this.spinButton.node.on('click', this.onSpinPressed, this);
         }
 
@@ -98,17 +99,20 @@ export class GameManager extends Component {
     }
 
     public onSpinPressed() {
+        // 如果正在處理結果（展演中），不回應
         if (this.isProcessingResults) {
             return;
         }
 
+        // 如果正在滾動 -> 當作 STOP（即停）
         if (this.isSpinning) {
-            // 按下STOP按鈕
+            // 設定立即停止旗標並立刻執行立即停止流程
             this.immediateStopRequested = true;
-            this._stopAllReelsImmediately();
+            this._stopAllReelsImmediately().catch(console.error);
             return;
         }
 
+        // 否則開始新的 Spin
         this.startSpin();
     }
 
@@ -118,14 +122,14 @@ export class GameManager extends Component {
         // 清除所有之前的定時器
         this.clearAllTimeouts();
 
-        // 清除前一局畫面與分數
+        // 清除前一局畫面與分數（UI 的連線標示不會在滾輪停止前顯示）
         if (this.ui) {
             this.ui.clearLines();
             this.ui.updateScore(0);
             this.ui.showMessage('');
         }
 
-        // 準備最終結果
+        // 準備最終結果（9 格）
         if (this.customResult && this.customResult.length === 9) {
             this.finalSymbols = [...this.customResult];
             this.customResult = null;
@@ -138,90 +142,150 @@ export class GameManager extends Component {
         this.isProcessingResults = false;
         this.updateSpinInteractable();
 
-        // 依序啟動滾輪
+        // 依序啟動滾輪（若玩家在任何時間按 STOP，會立刻清掉這些 timeout，因此不會再啟動未開始的 reel）
         for (let i = 0; i < this.reels.length; i++) {
+            const idx = i;
             const timeoutId = setTimeout(() => {
+                // 如果已要求立即停止，則不啟動該 reel 的 spin（_stopAllReelsImmediately 會把最終結果設回給未啟動的 reel）
                 if (this.isSpinning && !this.immediateStopRequested) {
-                    const reel = this.reels[i];
+                    const reel = this.reels[idx];
                     if (reel) {
-                        const finalReelSymbols = this.getFinalReelSymbols(i);
+                        const finalReelSymbols = this.getFinalReelSymbols(idx);
+                        // 呼叫 spin，Reel 會持續滾動直到被 stop/forceStop
                         reel.spin(this.reelSpinDuration, finalReelSymbols).catch(console.error);
                     }
                 }
             }, i * this.startDelayBetweenReels * 1000);
-            
+
             this.spinTimeouts.push(timeoutId);
         }
 
-        // 設置自動停止時間
+        // 設置自動停止時間（玩家若不按 STOP，會自動漸停所有滾輪）
         const autoStopTime = ((this.reels.length - 1) * this.startDelayBetweenReels + this.autoStopDelay) * 1000;
         const autoStopTimeoutId = setTimeout(() => {
             if (this.isSpinning && !this.immediateStopRequested) {
-                this._stopAllReelsGradually();
+                this._stopAllReelsGradually().catch(console.error);
             }
         }, autoStopTime);
-        
+
         this.spinTimeouts.push(autoStopTimeoutId);
     }
 
-    // 立即停止所有滾輪（按STOP按鈕）
-    private _stopAllReelsImmediately() {
+    // 立即停止所有滾輪（按 STOP 按鈕），確保所有滾輪都設為最終結果後才顯示連線
+    private async _stopAllReelsImmediately() {
         console.log('[GameManager] 立即停止所有滾輪');
-        
+
+        // 先清除還沒執行的所有 timeout（防止之後的 start 或 auto-stop 再觸發）
         this.clearAllTimeouts();
-        
-        // 同時停止所有滾輪
+
+        // 建立等待所有 reel 完成的 promises
+        const stopPromises: Promise<void>[] = [];
+
         for (let i = 0; i < this.reels.length; i++) {
             const reel = this.reels[i];
-            if (reel && reel.isSpinning()) {
-                const finalReelSymbols = this.getFinalReelSymbols(i);
-                reel.forceStop(finalReelSymbols);
-            }
+            if (!reel) continue;
+
+            const finalReelSymbols = this.getFinalReelSymbols(i);
+
+            // 如果 reel 還沒開始 spin（isSpinning() === false），直接把最終結果寫上並 resolve
+            // 如果 reel 正在 spin，呼叫 forceStop，並等待完成
+            const p = new Promise<void>((resolve) => {
+                try {
+                    if (reel.isSpinning()) {
+                        // forceStop 會在完成後呼叫 callback resolve
+                        reel.forceStop(finalReelSymbols, () => {
+                            resolve();
+                        });
+                    } else {
+                        // 未開始滾動或已停止：直接設置最終結果並立即 resolve
+                        reel.setFinalResult(finalReelSymbols, () => {
+                            resolve();
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[GameManager] stop reel error:', e);
+                    resolve();
+                }
+            });
+
+            stopPromises.push(p);
         }
+
+        // 等待所有 reels 都處理完畢（包含尚未啟動的 reel）
+        if (stopPromises.length > 0) {
+            await Promise.all(stopPromises);
+        }
+
+        // 所有 reel 確認為最終狀態後，執行後續處理（更新全局 cell、計算連線並展演）
+        this.finalizeSpin();
+    }
+
+    // 漸進式停止滾輪（自動停止），保留由左到右依序停的自然感
+    private async _stopAllReelsGradually() {
+        console.log('[GameManager] 漸進式停止滾輪');
+
+        // 依序停止滾輪，等待每軸完成後再停止下一軸
+        const stopPromises: Promise<void>[] = [];
+
+        for (let i = 0; i < this.reels.length; i++) {
+            const idx = i;
+            const p = new Promise<void>((resolve) => {
+                const timeoutId = setTimeout(() => {
+                    const reel = this.reels[idx];
+                    if (reel && reel.isSpinning()) {
+                        const finalReelSymbols = this.getFinalReelSymbols(idx);
+                        reel.forceStop(finalReelSymbols, () => {
+                            resolve();
+                        });
+                    } else {
+                        // 若已停止或還沒開始，直接 resolve
+                        // 若還沒開始但 auto-stop 到這一步，則設置最終結果，確保一致性
+                        if (reel && !reel.isSpinning()) {
+                            const finalReelSymbols = this.getFinalReelSymbols(idx);
+                            reel.setFinalResult(finalReelSymbols, () => {
+                                resolve();
+                            });
+                        } else {
+                            resolve();
+                        }
+                    }
+                }, i * this.stopDelayBetweenReels * 1000);
+
+                this.spinTimeouts.push(timeoutId);
+            });
+
+            stopPromises.push(p);
+        }
+
+        // 等待所有滾輪停下
+        await Promise.all(stopPromises);
+
+        // 稍微等待確保畫面穩定（非常短）
+        await this.sleep(120);
 
         this.finalizeSpin();
     }
 
-    // 漸進式停止滾輪（自動停止）
-    private _stopAllReelsGradually() {
-        console.log('[GameManager] 漸進式停止滾輪');
-        
-        // 依序停止滾輪，製造自然的停止效果
-        for (let i = 0; i < this.reels.length; i++) {
-            const timeoutId = setTimeout(() => {
-                const reel = this.reels[i];
-                if (reel && reel.isSpinning()) {
-                    const finalReelSymbols = this.getFinalReelSymbols(i);
-                    reel.forceStop(finalReelSymbols);
-                    
-                    // 如果是最後一個滾輪，完成spin
-                    if (i === this.reels.length - 1) {
-                        setTimeout(() => {
-                            this.finalizeSpin();
-                        }, 500); // 等待最後的動畫完成
-                    }
-                }
-            }, i * this.stopDelayBetweenReels * 1000);
-            
-            this.spinTimeouts.push(timeoutId);
-        }
-    }
-
-    // 完成 Spin 並處理結果
+    // 完成 Spin 並處理結果（此處確保所有滾輪已經被設定為最終符號）
     private async finalizeSpin() {
-        this.isSpinning = false;
-        this.updateSpinInteractable();
+        console.log('[GameManager] 完成 Spin，準備處理結果');
 
-        // 更新 cells 顯示
+        // 標記非滾動狀態（但進入結果處理程序）
+        this.isSpinning = false;
+
+        // 更新 cells 顯示（一次性，確保全局 3x3 與 finalSymbols 一致）
         if (this.finalSymbols) {
             this.updateCellsDisplay(this.finalSymbols);
         }
 
-        // 處理結果展演
+        // 處理結果展演（會將 isProcessingResults 設為 true，並在展演完成後還原）
         await this._processResultsAndPresentation();
+
+        // 展演完成後才更新按鈕狀態
+        this.updateSpinInteractable();
     }
 
-    // 獲取指定滾輪的最終符號
+    // 獲取指定滾輪的最終符號（從 finalSymbols 中抽取該列的三個符號）
     private getFinalReelSymbols(reelIndex: number): SymbolType[] {
         if (!this.finalSymbols) {
             return [
@@ -246,6 +310,7 @@ export class GameManager extends Component {
         this.spinTimeouts = [];
     }
 
+    // 將 9 個符號更新到全局 cells 顯示（只在所有 reel 最終結果確定後呼叫）
     private updateCellsDisplay(symbols: SymbolType[]) {
         if (!symbols || symbols.length < 9) return;
 
@@ -262,6 +327,7 @@ export class GameManager extends Component {
         }
     }
 
+    // 處理結果與展演（確保只有在 finalizeSpin 後才會執行）
     private async _processResultsAndPresentation() {
         if (!this.finalSymbols) return;
 
@@ -277,12 +343,13 @@ export class GameManager extends Component {
         }
 
         if (wins.length === 0) {
+            // 沒有中獎，結束
             this.isProcessingResults = false;
             this.updateSpinInteractable();
             return;
         }
 
-        // 展演邏輯保持不變
+        // 展演：先全部標示一次，再輪播（如果多條）
         if (this.ui) {
             this.ui.clearLines();
             for (const w of wins) {
@@ -309,6 +376,7 @@ export class GameManager extends Component {
             await this.sleep(1500);
         }
 
+        // 若有多條，中間輪播顯示
         if (this.ui && wins.length > 1) {
             for (let i = 0; i < wins.length; i++) {
                 this.ui.clearLines();
@@ -359,13 +427,17 @@ export class GameManager extends Component {
         return out;
     }
 
+    // 按鈕狀態：重要改動 -> 當 isSpinning 時，spinButton 必須仍可交互（以便按 STOP）
     private updateSpinInteractable() {
         if (this.spinButton) {
+            // 只要不是處理結果（展演）就可以按：若正在滾動，按鈕做為 STOP 使用
             this.spinButton.interactable = !this.isProcessingResults;
         }
 
         if (this.spinButtonLabel) {
-            if (this.isSpinning) {
+            if (this.isProcessingResults) {
+                this.spinButtonLabel.string = "SPIN";
+            } else if (this.isSpinning) {
                 this.spinButtonLabel.string = "STOP";
             } else {
                 this.spinButtonLabel.string = "SPIN";
@@ -381,384 +453,3 @@ export class GameManager extends Component {
         this.clearAllTimeouts();
     }
 }
-
-// // GameManager.ts - 修正展演邏輯和滾輪系統
-// import { _decorator, Component, Sprite, SpriteFrame, EditBox, Button, Label } from 'cc';
-// import { Reel } from './Reel';
-// import { UIManager } from './UIManager';
-// import { PaylineChecker, WinLine } from './PaylineChecker';
-// import { SymbolType, SymbolNames } from './SymbolConfig';
-// const { ccclass, property } = _decorator;
-
-// @ccclass('GameManager')
-// export class GameManager extends Component {
-//   @property([Reel])
-//   public reels: Reel[] = []; // 3 個 Reel，每個包含 3 個 Cell
-
-//   // 這些 cells 現在主要用於顯示最終結果和連線檢查
-//   @property([Sprite])
-//   public cells: Sprite[] = []; // 仍保留用於連線檢查的顯示
-
-//   @property([SpriteFrame])
-//   public spriteFrames: SpriteFrame[] = [];
-
-//   @property(UIManager)
-//   public ui: UIManager | null = null;
-
-//   @property(EditBox)
-//   public editBox: EditBox | null = null;
-
-//   @property(Button)
-//   public confirmButton: Button | null = null;
-
-//   @property(Button)
-//   public spinButton: Button | null = null;
-  
-//   @property(Label)
-//   public spinButtonLabel: Label | null = null;
-
-//   // timing config
-//   @property
-//   public startDelayBetweenReels = 0.3; // 每軸啟動的延遲（秒）
-
-//   @property
-//   public delayAfterAllStartedBeforeStopping = 1.0; // 所有軸啟動後，開始停止的延遲（秒）
-
-//   @property
-//   public reelSpinDuration = 3.0; // Reel 滾動持續時間
-
-//   // internal state
-//   private isSpinning = false;
-//   private isProcessingResults = false;
-//   private immediateStopRequested = false;
-//   private scheduledStopCalled = false;
-//   private customResult: SymbolType[] | null = null;
-
-//   // the final 9-symbol result for this round (row-major 0..8)
-//   private finalSymbols: SymbolType[] | null = null;
-
-//   start() {
-//     console.log('[GameManager] GameManager 初始化開始');
-    
-//     if (this.spinButton) {
-//       this.spinButton.node.on('click', this.onSpinPressed, this);
-//       console.log('[GameManager] SPIN 按鈕事件已綁定');
-//     } else {
-//       console.error('[GameManager] SPIN 按鈕未綁定!');
-//     }
-    
-//     if (this.confirmButton) {
-//       this.confirmButton.node.on('click', this.onConfirmPressed, this);
-//       console.log('[GameManager] 確認按鈕事件已綁定');
-//     } else {
-//       console.warn('[GameManager] 確認按鈕未綁定');
-//     }
-    
-//     // 檢查關鍵綁定
-//     console.log(`[GameManager] Reels 數量: ${this.reels.length}`);
-//     console.log(`[GameManager] Cells 數量: ${this.cells.length}`);
-//     console.log(`[GameManager] SpriteFrames 數量: ${this.spriteFrames.length}`);
-    
-//     for (let i = 0; i < this.reels.length; i++) {
-//       if (!this.reels[i]) {
-//         console.error(`[GameManager] Reel ${i} 未綁定!`);
-//       }
-//     }
-    
-//     this.updateSpinInteractable();
-//     this.initializeDisplay();
-    
-//     console.log('[GameManager] GameManager 初始化完成');
-//   }
-
-//   private initializeDisplay() {
-//     const initialSymbols = this.generateRandomSymbols();
-//     this.updateCellsDisplay(initialSymbols);
-//   }
-
-//   public onConfirmPressed() {
-//     const parsed = this.parseEditBox();
-//     if (parsed) {
-//       this.customResult = parsed;
-//       if (this.ui) {
-//         this.ui.showMessage('自訂結果已設定！');
-//       }
-//     } else {
-//       this.customResult = null;
-//       if (this.ui) {
-//         this.ui.showMessage('輸入格式錯誤或已清除自訂結果');
-//       }
-//     }
-    
-//     this.scheduleOnce(() => {
-//       if (this.ui) {
-//         this.ui.showMessage('');
-//       }
-//     }, 3);
-//   }
-
-//   public onSpinPressed() {
-//     if (this.isProcessingResults) {
-//       return;
-//     }
-
-//     if (this.isSpinning) {
-//       this.immediateStopRequested = true;
-//       this._stopAllReelsNow();
-//       return;
-//     }
-
-//     // 直接開始新的 spin，不需要等單線展演
-//     this.startSpin();
-//   }
-
-//   private async startSpin() {
-//     console.log('[GameManager] 開始 Spin 流程');
-    
-//     // 清除前一局畫面與分數
-//     if (this.ui) {
-//       this.ui.clearLines();
-//       this.ui.updateScore(0);
-//       this.ui.showMessage('');
-//     }
-
-//     // 使用自訂結果或生成隨機結果
-//     if (this.customResult && this.customResult.length === 9) {
-//       this.finalSymbols = [...this.customResult];
-//       this.customResult = null;
-//       console.log('[GameManager] 使用自訂結果:', this.finalSymbols);
-//     } else {
-//       this.finalSymbols = this.generateRandomSymbols();
-//       console.log('[GameManager] 使用隨機結果:', this.finalSymbols);
-//     }
-
-//     this.isSpinning = true;
-//     this.immediateStopRequested = false;
-//     this.scheduledStopCalled = false;
-//     this.isProcessingResults = false;
-//     this.updateSpinInteractable();
-
-//     console.log(`[GameManager] 準備啟動 ${this.reels.length} 個滾輪`);
-
-//     // 依序啟動三個滾輪（間隔 0.3 秒）
-//     for (let i = 0; i < this.reels.length; i++) {
-//       const reel = this.reels[i];
-      
-//       if (!reel) {
-//         console.error(`[GameManager] Reel ${i} 未綁定!`);
-//         continue;
-//       }
-      
-//       // 計算這個 reel 對應的最終符號（column i 的上中下三個符號）
-//       const finalReelSymbols: SymbolType[] = this.finalSymbols ? [
-//         this.finalSymbols[i],     // 上排
-//         this.finalSymbols[3 + i], // 中排
-//         this.finalSymbols[6 + i]  // 下排
-//       ] : undefined;
-
-//       console.log(`[GameManager] 將在 ${i * this.startDelayBetweenReels} 秒後啟動 Reel ${i}，目標符號:`, finalReelSymbols);
-
-//       setTimeout(() => {
-//         console.log(`[GameManager] 正在啟動 Reel ${i}`);
-//         try {
-//           reel.spin(this.reelSpinDuration, finalReelSymbols).catch((err) => {
-//             console.error(`[GameManager] Reel ${i} spin 錯誤:`, err);
-//           });
-//         } catch (e) {
-//           console.error(`[GameManager] Reel ${i} spin 拋出異常:`, e);
-//         }
-//       }, i * this.startDelayBetweenReels * 1000);
-//     }
-
-//     // 計算停止時間：最後一個滾輪啟動時間 + 等待時間
-//     const lastStartDelay = (Math.max(0, this.reels.length - 1)) * this.startDelayBetweenReels;
-//     const stopScheduleTime = (lastStartDelay + this.delayAfterAllStartedBeforeStopping) * 1000;
-
-//     console.log(`[GameManager] 將在 ${stopScheduleTime/1000} 秒後自動停止所有滾輪`);
-
-//     setTimeout(() => {
-//       if (!this.scheduledStopCalled && this.isSpinning) {
-//         console.log('[GameManager] 執行排程停止');
-//         this.scheduledStopCalled = true;
-//         if (!this.immediateStopRequested) {
-//           this._stopAllReelsNow();
-//         }
-//       }
-//     }, stopScheduleTime);
-//   }
-
-//   private async _stopAllReelsNow() {
-//     if (!this.isSpinning) return;
-
-//     this.unscheduleAllCallbacks();
-//     this.scheduledStopCalled = true;
-
-//     // 依序停止滾輪（可以考慮加上小延遲讓停止更自然）
-//     for (let c = 0; c < this.reels.length; c++) {
-//       const reel = this.reels[c];
-      
-//       const finalReelSymbols: SymbolType[] = this.finalSymbols ? [
-//         this.finalSymbols[c],     // 上排
-//         this.finalSymbols[3 + c], // 中排
-//         this.finalSymbols[6 + c]  // 下排
-//       ] : undefined;
-
-//       try {
-//         reel.forceStop(finalReelSymbols);
-//       } catch (e) {
-//         console.warn('[GameManager] reel.forceStop error:', e);
-//       }
-//     }
-
-//     // 同步更新 cells 顯示（用於連線檢查）
-//     if (this.finalSymbols) {
-//       this.updateCellsDisplay(this.finalSymbols);
-//     } else {
-//       this.finalSymbols = this.generateRandomSymbols();
-//       this.updateCellsDisplay(this.finalSymbols);
-//     }
-
-//     this.isSpinning = false;
-//     this.updateSpinInteractable();
-
-//     // 檢查並處理連線結果
-//     await this._processResultsAndPresentation();
-//   }
-
-//   private updateCellsDisplay(symbols: SymbolType[]) {
-//     if (!symbols || symbols.length < 9) return;
-//     for (let i = 0; i < Math.min(9, this.cells.length); i++) {
-//       const sym = symbols[i];
-//       const idx = SymbolNames.indexOf(sym);
-//       if (idx >= 0 && this.spriteFrames && this.spriteFrames[idx]) {
-//         try {
-//           this.cells[i].spriteFrame = this.spriteFrames[idx];
-//         } catch (e) {
-//           console.warn(`[GameManager] failed to set spriteFrame for cell ${i}`, e);
-//         }
-//       }
-//     }
-//   }
-
-//   // 修正：完整的展演流程，不等玩家按 SPIN
-//   private async _processResultsAndPresentation() {
-//     if (!this.finalSymbols) return;
-
-//     this.isProcessingResults = true;
-//     this.updateSpinInteractable();
-
-//     // 檢查中獎線
-//     const wins: WinLine[] = PaylineChecker.check(this.finalSymbols);
-//     let total = 0;
-//     for (const w of wins) total += w.score;
-
-//     if (this.ui) {
-//       this.ui.updateScore(total);
-//     }
-
-//     if (wins.length === 0) {
-//       // 無中獎：立即結束
-//       this.isProcessingResults = false;
-//       this.updateSpinInteractable();
-//       return;
-//     }
-
-//     // === 第一階段：全線展演（顯示所有中獎線並閃爍） ===
-//     if (this.ui) {
-//       this.ui.clearLines();
-//       for (const w of wins) {
-//         this.ui.showLine(w.lineIndex);
-//       }
-
-//       // 同時對所有中獎線執行閃爍
-//       const flashPromises: Promise<void>[] = [];
-//       for (const w of wins) {
-//         try {
-//           const p = this.ui.flashLineTwice(w.lineIndex);
-//           if (p && typeof p.then === 'function') {
-//             flashPromises.push(p);
-//           }
-//         } catch (e) {
-//           console.warn('[GameManager] flashLineTwice error:', e);
-//         }
-//       }
-
-//       // 等待 1.5 秒和所有閃爍完成
-//       await Promise.race([
-//         Promise.all(flashPromises),
-//         this.sleep(1500)
-//       ]);
-//     } else {
-//       await this.sleep(1500);
-//     }
-
-//     // === 第二階段：個別展演（每條線單獨顯示 1 秒） ===
-//     if (this.ui && wins.length > 1) { // 只有多條線時才需要個別展演
-//       for (let i = 0; i < wins.length; i++) {
-//         this.ui.clearLines();
-//         this.ui.showLine(wins[i].lineIndex);
-//         await this.sleep(1000);
-//       }
-      
-//       // 最後恢復顯示所有中獎線
-//       this.ui.clearLines();
-//       for (const w of wins) {
-//         this.ui.showLine(w.lineIndex);
-//       }
-//     }
-
-//     this.isProcessingResults = false;
-//     this.updateSpinInteractable();
-//   }
-
-//   private parseEditBox(): SymbolType[] | null {
-//     if (!this.editBox) return null;
-//     const raw = (this.editBox.string || '').trim();
-//     if (!raw) return null;
-
-//     const parts = raw.split(/[,|\s]+/).map(s => s.trim()).filter(s => s.length > 0);
-//     if (parts.length !== 9) {
-//       console.warn('[GameManager] EditBox input must contain exactly 9 symbols, got:', parts.length);
-//       return null;
-//     }
-
-//     const arr: SymbolType[] = [];
-//     for (const p of parts) {
-//       const up = p.toUpperCase();
-//       if (!['A', 'B', 'C'].includes(up)) {
-//         console.warn('[GameManager] Invalid symbol in EditBox:', p);
-//         return null;
-//       }
-//       arr.push(up as SymbolType);
-//     }
-//     return arr;
-//   }
-
-//   private generateRandomSymbols(): SymbolType[] {
-//     const out: SymbolType[] = [];
-//     for (let i = 0; i < 9; i++) {
-//       const idx = Math.floor(Math.random() * SymbolNames.length);
-//       out.push(SymbolNames[idx]);
-//     }
-//     return out;
-//   }
-
-//   private updateSpinInteractable() {
-//     if (this.spinButton) {
-//       this.spinButton.interactable = !this.isProcessingResults;
-//     }
-    
-//     // 更新按鈕文字
-//     if (this.spinButtonLabel) {
-//       if (this.isSpinning) {
-//         this.spinButtonLabel.string = "STOP";
-//       } else {
-//         this.spinButtonLabel.string = "SPIN";
-//       }
-//     }
-//   }
-
-//   private sleep(ms: number): Promise<void> {
-//     return new Promise<void>(res => setTimeout(res, ms));
-//   }
-// }

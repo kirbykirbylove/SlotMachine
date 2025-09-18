@@ -16,11 +16,20 @@ export class UIManager extends Component {
   start() {
     // 初始化時隱藏所有連線
     this.clearLines();
+    this.showScore();
+  }
+
+  public showScore() {
+    if (this.scoreLabel)
+      this.scoreLabel.node.setSiblingIndex(-1);
+      this.scoreLabel.string = `贏分\n\n0`;
   }
 
   // 更新分數
   public updateScore(v: number) {
-    if (this.scoreLabel) this.scoreLabel.string = `${v}`;
+    if (this.scoreLabel)
+      this.scoreLabel.node.setSiblingIndex(-1);
+      this.scoreLabel.string = `贏分\n\n${v}`;
   }
 
   public clearLines() {
