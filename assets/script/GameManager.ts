@@ -35,10 +35,10 @@ export class GameManager extends Component {
 
     // 時序配置
     @property
-    public startDelayBetweenReels = 0.3; // 每軸啟動的延遲（秒）
+    public startDelayBetweenReels = 0.7; // 每軸啟動的延遲（秒）0.3
 
     @property
-    public stopDelayBetweenReels = 0.4; // 每軸停止的延遲（秒），自動停用
+    public stopDelayBetweenReels = 0.8; // 每軸停止的延遲（秒），自動停用 0.4
 
     @property
     public reelSpinDuration = 3.0; // Reel 滾動持續時間（目前 Reel 內部自己控制）
@@ -53,6 +53,9 @@ export class GameManager extends Component {
     private customResult: SymbolType[] | null = null;
     private finalSymbols: SymbolType[] | null = null;
     private spinTimeouts: number[] = []; // 存儲所有 setTimeout ID
+        // 新增屬性
+    private lastWins: WinLine[] = []; // 保存上一局的中獎線
+    private singleLineInterval: number | null = null; // 跑單線展演的定時器
 
     start() {
         console.log('[GameManager] GameManager 初始化開始');
@@ -119,6 +122,9 @@ export class GameManager extends Component {
     private async startSpin() {
         console.log('[GameManager] 開始 Spin 流程');
 
+        // 停止跑單線展演
+        this.stopSingleLinePresentation();
+
         // 清除所有之前的定時器
         this.clearAllTimeouts();
 
@@ -142,34 +148,35 @@ export class GameManager extends Component {
         this.isProcessingResults = false;
         this.updateSpinInteractable();
 
-        // 依序啟動滾輪（若玩家在任何時間按 STOP，會立刻清掉這些 timeout，因此不會再啟動未開始的 reel）
-        for (let i = 0; i < this.reels.length; i++) {
-            const idx = i;
-            const timeoutId = setTimeout(() => {
-                // 如果已要求立即停止，則不啟動該 reel 的 spin（_stopAllReelsImmediately 會把最終結果設回給未啟動的 reel）
-                if (this.isSpinning && !this.immediateStopRequested) {
-                    const reel = this.reels[idx];
-                    if (reel) {
-                        const finalReelSymbols = this.getFinalReelSymbols(idx);
-                        // 呼叫 spin，Reel 會持續滾動直到被 stop/forceStop
-                        reel.spin(this.reelSpinDuration, finalReelSymbols).catch(console.error);
-                    }
-                }
-            }, i * this.startDelayBetweenReels * 1000);
-
-            this.spinTimeouts.push(timeoutId);
-        }
-
-        // 設置自動停止時間（玩家若不按 STOP，會自動漸停所有滾輪）
-        const autoStopTime = ((this.reels.length - 1) * this.startDelayBetweenReels + this.autoStopDelay) * 1000;
-        const autoStopTimeoutId = setTimeout(() => {
+        // 依序啟動滾輪
+    for (let i = 0; i < this.reels.length; i++) {
+        const idx = i;
+        const timeoutId = setTimeout(() => {
             if (this.isSpinning && !this.immediateStopRequested) {
-                this._stopAllReelsGradually().catch(console.error);
+                const reel = this.reels[idx];
+                if (reel) {
+                    const finalReelSymbols = this.getFinalReelSymbols(idx);
+                    reel.spin(this.reelSpinDuration, finalReelSymbols).catch(console.error);
+                }
             }
-        }, autoStopTime);
+        }, i * this.startDelayBetweenReels * 1000);
 
-        this.spinTimeouts.push(autoStopTimeoutId);
+        this.spinTimeouts.push(timeoutId);
     }
+
+    // 修正：從最後一個滾輪開始轉動後，再等待1秒開始自動停止
+    const lastReelStartTime = (this.reels.length - 1) * this.startDelayBetweenReels * 1000;
+    const autoStopTime = lastReelStartTime + (this.autoStopDelay * 1000); // 1秒後開始停止
+    
+    const autoStopTimeoutId = setTimeout(() => {
+        if (this.isSpinning && !this.immediateStopRequested) {
+            this._stopAllReelsGradually().catch(console.error);
+        }
+    }, autoStopTime);
+
+    this.spinTimeouts.push(autoStopTimeoutId);
+}
+
 
     // 立即停止所有滾輪（按 STOP 按鈕），確保所有滾輪都設為最終結果後才顯示連線
     private async _stopAllReelsImmediately() {
@@ -338,6 +345,9 @@ export class GameManager extends Component {
         let total = 0;
         for (const w of wins) total += w.score;
 
+        // 保存當前局的中獎結果
+        this.lastWins = [...wins];
+
         if (this.ui) {
             this.ui.updateScore(total);
         }
@@ -392,6 +402,55 @@ export class GameManager extends Component {
 
         this.isProcessingResults = false;
         this.updateSpinInteractable();
+        
+        // 開始跑單線展演
+        this.startSingleLinePresentation();
+    }
+
+        // 新增：開始跑單線展演
+    private startSingleLinePresentation() {
+        if (!this.ui || this.lastWins.length === 0) return;
+
+        // 清除之前的單線展演
+        this.stopSingleLinePresentation();
+
+        let currentIndex = 0;
+
+        const showNextLine = () => {
+            if (this.isSpinning || this.isProcessingResults) {
+                // 如果開始新局，停止單線展演
+                this.stopSingleLinePresentation();
+                return;
+            }
+
+            if (this.ui && this.lastWins.length > 0) {
+                // 清除所有線條
+                this.ui.clearLines();
+                
+                // 顯示當前線條
+                const currentWin = this.lastWins[currentIndex];
+                this.ui.showLine(currentWin.lineIndex);
+                
+                // 移到下一條線
+                currentIndex = (currentIndex + 1) % this.lastWins.length;
+            }
+        };
+
+        // 立即顯示第一條線
+        showNextLine();
+        
+        // 每秒切換下一條線
+        this.singleLineInterval = setInterval(() => {
+            showNextLine();
+        }, 1000);
+    }
+
+    // 新增：停止跑單線展演
+    private stopSingleLinePresentation() {
+        if (this.singleLineInterval) {
+            clearInterval(this.singleLineInterval);
+            this.singleLineInterval = null;
+        }
     }
 
     private parseEditBox(): SymbolType[] | null {
@@ -451,5 +510,6 @@ export class GameManager extends Component {
 
     onDestroy() {
         this.clearAllTimeouts();
+        this.stopSingleLinePresentation();
     }
 }
