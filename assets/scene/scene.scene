@@ -335,10 +335,9 @@
     "spinButtonLabel": {
       "__id__": 77
     },
-    "startDelayBetweenReels": 0.3,
-    "stopDelayBetweenReels": 0.4,
-    "reelSpinDuration": 5,
-    "autoStopDelay": 2,
+    "startDelayBetweenReels": 0.5,
+    "stopDelayBetweenReels": 0.6,
+    "autoStopDelay": 0.8,
     "_id": "6ebtVhj2RLcZEhvc5L22/J"
   },
   {

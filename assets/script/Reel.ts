@@ -1,5 +1,4 @@
-// Reel.ts - 修正版本，移除滚动中的符号随机化，实现平滑自然的滚动效果
-
+// Reel.ts - V1簡化版（移除冗餘程式碼，保持所有功能）
 import { _decorator, Component, Sprite, SpriteFrame, tween, Vec3, Node } from 'cc';
 import { SymbolType, SymbolNames } from './SymbolConfig';
 
@@ -7,137 +6,91 @@ const { ccclass, property } = _decorator;
 
 @ccclass('Reel')
 export class Reel extends Component {
-    // 可见的3个Cell（用于最终显示和连线检查）
     @property([Sprite])
-    public cellSprites: Sprite[] = []; // 长度应为 3，对应上中下
+    public cellSprites: Sprite[] = []; // 3個可見格子
 
-    // 滚动容器（包含多个符号节点，用于滚动效果）
     @property(Node)
-    public reelContent: Node = null!; // 滚动容器
+    public reelContent: Node = null!; // 滾動容器
 
     @property([SpriteFrame])
     public symbolFrames: SpriteFrame[] = [];
 
-    // 滚动参数
     @property
-    public symbolHeight: number = 150; // 每个符号的高度
+    public symbolHeight: number = 250;
 
     @property
-    public visibleSymbolCount: number = 3; // 可见符号数量
+    public visibleSymbolCount: number = 3;
 
     @property
-    public bufferSymbolCount: number = 2; // 增加缓冲符号数量，确保滚动更自然
+    public bufferSymbolCount: number = 2;
 
-    // 滚动相关
+    // 核心狀態
     private spinning = false;
-    private spinPromiseResolve: ((value: SymbolType[]) => void) | null = null;
+    private stopFlag = false;
     private rollTween: any = null;
-    private currentSymbols: SymbolType[] = [SymbolType.A, SymbolType.B, SymbolType.C]; // 当前显示的3个符号
-    private contentSymbols: SymbolType[] = []; // 滚动容器中的所有符号
-    private contentSprites: Sprite[] = []; // 滚动容器中的所有Sprite
-    private totalSymbolCount: number = 0;
-    private stopFlag: boolean = false;
+    private spinPromiseResolve: ((value: SymbolType[]) => void) | null = null;
     private finalSymbols: SymbolType[] | null = null;
     
-    // 新增：预设的符号序列，用于自然滚动
+    // 符號資料
+    private currentSymbols: SymbolType[] = [SymbolType.A, SymbolType.B, SymbolType.C];
+    private contentSymbols: SymbolType[] = [];
+    private contentSprites: Sprite[] = [];
     private symbolSequence: SymbolType[] = [];
 
     start() {
-        console.log(`[Reel ${this.node.name}] 初始化开始`);
-
-        // 检查绑定
-        this.checkBindings();
+        console.log(`[Reel ${this.node.name}] 初始化開始`);
         
-        // 生成符号序列
+        if (this.cellSprites.length !== 3 || !this.reelContent) {
+            console.error(`[Reel ${this.node.name}] 綁定檢查失敗`);
+            return;
+        }
+
         this.generateSymbolSequence();
-
-        // 初始化滚动容器
         this.initializeReelContent();
-
-        // 初始化显示
         this.updateCellDisplay();
-
-        console.log(`[Reel ${this.node.name}] 初始化完成，当前符号:`, this.currentSymbols);
-    }
-
-    private checkBindings() {
-        if (this.cellSprites.length !== 3) {
-            console.error(`[Reel ${this.node.name}] cellSprites 必须有 3 个元素`);
-            return;
-        }
-
-        if (!this.reelContent) {
-            console.error(`[Reel ${this.node.name}] reelContent 未绑定`);
-            return;
-        }
-    }
-
-    // 新增：生成一个长的符号序列用于滚动
-    private generateSymbolSequence() {
-        this.symbolSequence = [];
-        const sequenceLength = 50; // 生成50个符号的序列
         
-        for (let i = 0; i < sequenceLength; i++) {
-            const randomSymbol = SymbolNames[Math.floor(Math.random() * SymbolNames.length)];
-            this.symbolSequence.push(randomSymbol);
+        console.log(`[Reel ${this.node.name}] 初始化完成`);
+    }
+
+    // 產生符號序列
+    private generateSymbolSequence() {
+        this.symbolSequence = []; 
+        for (let i = 0; i < 50; i++) {
+            this.symbolSequence.push(SymbolNames[Math.floor(Math.random() * SymbolNames.length)]);
         }
     }
 
-    // 初始化滚动容器
+    // 初始化滾動容器
     private initializeReelContent() {
-        if (!this.reelContent) return;
-
-        this.totalSymbolCount = this.visibleSymbolCount + this.bufferSymbolCount * 2;
-
-        // 清理现有内容
         this.reelContent.removeAllChildren();
         this.contentSprites = [];
         this.contentSymbols = [];
 
-        // 从符号序列中取符号创建节点
-        for (let i = 0; i < this.totalSymbolCount; i++) {
-            // 创建符号节点
+        const totalCount = this.visibleSymbolCount + this.bufferSymbolCount * 2;
+
+        // 建立符號節點
+        for (let i = 0; i < totalCount; i++) {
             const symbolNode = new Node(`Symbol_${i}`);
             const sprite = symbolNode.addComponent(Sprite);
-
-            // 从预设序列中取符号，确保滚动时符号固定
             const symbol = this.symbolSequence[i % this.symbolSequence.length];
+
             this.contentSymbols.push(symbol);
-
-            // 设置图片
-            const symbolIndex = SymbolNames.indexOf(symbol);
-            if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-                sprite.spriteFrame = this.symbolFrames[symbolIndex];
-            }
-
-            // 设置位置（从上到下排列）
-            symbolNode.setPosition(0, (this.totalSymbolCount - 1 - i) * this.symbolHeight, 0);
-
-            this.reelContent.addChild(symbolNode);
             this.contentSprites.push(sprite);
+            
+            // 設定圖片和位置
+            this.updateSpriteFrame(sprite, symbol);
+            symbolNode.setPosition(0, (totalCount - 1 - i) * this.symbolHeight, 0);
+            this.reelContent.addChild(symbolNode);
         }
 
-        // 设置初始位置，让可见区域显示中间的符号
-        const initialY = -this.bufferSymbolCount * this.symbolHeight;
-        this.reelContent.setPosition(0, initialY, 0);
-
-        // 更新当前可见符号
+        // 設定初始位置
+        this.reelContent.setPosition(0, -this.bufferSymbolCount * this.symbolHeight, 0);
         this.updateCurrentSymbols();
     }
 
-    // 更新当前可见的符号
-    private updateCurrentSymbols() {
-        const startIndex = this.bufferSymbolCount;
-        this.currentSymbols = [
-            this.contentSymbols[startIndex],
-            this.contentSymbols[startIndex + 1],
-            this.contentSymbols[startIndex + 2]
-        ];
-    }
-
-    // 开始滚动
+    // 開始滾動
     public spin(spinDuration = 1, finalSymbols?: SymbolType[]): Promise<SymbolType[]> {
-        console.log(`[Reel ${this.node.name}] 开始滚动，预期最终:`, finalSymbols);
+        console.log(`[Reel ${this.node.name}] 開始滾動`);
 
         this.spinning = true;
         this.stopFlag = false;
@@ -145,77 +98,80 @@ export class Reel extends Component {
 
         return new Promise((resolve) => {
             this.spinPromiseResolve = resolve;
-
-            // 开始连续滚动
             this.startContinuousRoll();
         });
     }
 
-    // 强制停止滚动（立即停止到 finalSymbols），接受 callback 作为完成标记
-    public forceStop(finalSymbols?: SymbolType[], onStopComplete?: () => void): SymbolType[] {
-        console.log(`[Reel ${this.node.name}] 强制停止（forceStop）`, finalSymbols);
+    // // 強制停止
+    // public forceStop(finalSymbols?: SymbolType[], onStopComplete?: () => void): SymbolType[] {
+    //     console.log(`[Reel ${this.node.name}] 強制停止`);
+    //     this.stopReel(finalSymbols, onStopComplete);
+    //     return this.currentSymbols;
+    // }
 
+    public forceStop(finalSymbols?: SymbolType[], onStopComplete?: () => void, delay: number = 1): SymbolType[] {
+    console.log(`[Reel ${this.node.name}] 強制停止，延遲 ${delay}s`);
+
+    // 先確保不會馬上停，等 delay 之後才真正呼叫 stopReel
+    this.scheduleOnce(() => {
+        this.stopReel(finalSymbols, onStopComplete);
+    }, delay);
+
+    return this.currentSymbols;
+}
+
+    // 設定最終結果（未開始滾動時使用）
+    public setFinalResult(finalSymbols: SymbolType[], onComplete?: () => void): void {
+        console.log(`[Reel ${this.node.name}] 設定最終結果`);
+        this.stopReel(finalSymbols, onComplete);
+    }
+
+    // 統一的停止處理
+    private stopReel(finalSymbols?: SymbolType[], onComplete?: () => void) {
+        this.spinning = false;
         this.stopFlag = true;
         this.finalSymbols = finalSymbols || this.finalSymbols;
 
-        // 停止持续滚动动画
         this.stopRollingAnimation();
 
-        // 直接把 finalSymbols 写入可见区域并对齐位置
         if (this.finalSymbols) {
             this.setFinalSymbols(this.finalSymbols);
         }
 
-        // 立刻对齐位置（不做额外动画）
         this.alignToExactPosition();
-
-        // 更新 cell 显示（Reel 内部的三格）
         this.updateCellDisplay();
 
-        // 调用完成回调
-        if (onStopComplete) {
-            try { onStopComplete(); } catch (e) { console.warn(e); }
+        // 執行回呼函式
+        if (onComplete) {
+            try { onComplete(); } catch (e) { console.warn(e); }
         }
 
-        // resolve spin 的 promise（若有）
         if (this.spinPromiseResolve) {
-            try {
-                this.spinPromiseResolve([...this.currentSymbols]);
+            try { 
+                this.spinPromiseResolve([...this.currentSymbols]); 
             } catch (e) { console.warn(e); }
             this.spinPromiseResolve = null;
         }
-
-        // 返回当前符号
-        return this.currentSymbols;
     }
 
-    // 开始连续滚动动画（修正版：不随机化符号）
+    // 連續滾動
     private startContinuousRoll() {
         if (!this.reelContent || this.stopFlag) return;
 
-        // 停止之前的动画
         this.stopRollingAnimation();
 
-        // 调整滚动参数以获得更自然的效果
-        const rollStepDistance = this.symbolHeight / 8; // 更小的步进距离，使滚动更平滑
-        const rollStepDuration = 0.02; // 更短的步进时间，增加流畅度
-
-        let sequenceIndex = 0; // 用于追踪符号序列位置
+        let sequenceIndex = 0;
 
         const step = () => {
             if (this.stopFlag || !this.spinning) return;
 
             const currentY = this.reelContent.position.y;
-            const newY = currentY - rollStepDistance;
+            const newY = currentY - this.symbolHeight / 8;
 
             this.rollTween = tween(this.reelContent)
-                .to(rollStepDuration, { position: new Vec3(0, newY, 0) })
+                .to(0.02, { position: new Vec3(0, newY, 0) })
                 .call(() => {
-                    // 检查是否需要循环位置
-                    this.checkAndLoopPosition(sequenceIndex);
-                    sequenceIndex++;
-
-                    // 继续下一步
+                    this.checkAndLoopPosition(sequenceIndex++);
                     if (!this.stopFlag && this.spinning) {
                         step();
                     }
@@ -226,65 +182,31 @@ export class Reel extends Component {
         step();
     }
 
-    // 检查并循环位置（修正版：不随机化符号）
+    // 檢查循環位置
     private checkAndLoopPosition(sequenceIndex: number) {
         if (!this.reelContent) return;
 
         const currentY = this.reelContent.position.y;
         const threshold = -this.symbolHeight * (this.bufferSymbolCount + 1);
 
-        // 如果滚动超过阈值，重置位置并更新符号
         if (currentY <= threshold) {
             const resetY = currentY + this.symbolHeight;
             this.reelContent.setPosition(0, resetY, 0);
-
-            // 循环符号：将最上面的符号移到最下面，并从符号序列中取新符号
-            this.cycleSymbolsWithSequence(sequenceIndex);
+            this.cycleSymbols(sequenceIndex);
         }
     }
 
-    // 使用符号序列循环符号内容（不随机化）
-    private cycleSymbolsWithSequence(sequenceIndex: number) {
+    // 循環符號
+    private cycleSymbols(sequenceIndex: number) {
         if (this.contentSymbols.length === 0) return;
 
-        // 将第一个符号移到最后
         this.contentSymbols.shift();
-        
-        // 从符号序列中取新的符号添加到末尾
         const newSymbol = this.symbolSequence[sequenceIndex % this.symbolSequence.length];
         this.contentSymbols.push(newSymbol);
-
-        // 更新显示
         this.updateContentDisplay();
     }
 
-    // 停止滚动并设置最终结果（由未开始滚动的 reel 调用）
-    private stopRolling(onStopComplete?: () => void) {
-        console.log(`[Reel ${this.node.name}] stopRolling called, final:`, this.finalSymbols);
-
-        this.spinning = false;
-        this.stopFlag = true;
-        this.stopRollingAnimation();
-
-        if (this.finalSymbols) {
-            this.setFinalSymbols(this.finalSymbols);
-        }
-
-        // 直接对齐位置并更新显示（移除任何弹跳与减速动画）
-        this.alignToExactPosition();
-        this.updateCellDisplay();
-
-        if (onStopComplete) {
-            onStopComplete();
-        }
-
-        if (this.spinPromiseResolve) {
-            this.spinPromiseResolve([...this.currentSymbols]);
-            this.spinPromiseResolve = null;
-        }
-    }
-
-    // 设置最终符号并调整可见区域内容
+    // 設定最終符號到可見區域
     private setFinalSymbols(symbols: SymbolType[]) {
         if (symbols.length !== 3) return;
 
@@ -297,489 +219,69 @@ export class Reel extends Component {
         this.updateContentDisplay();
     }
 
-    // 对齐到准确位置（直接设定，不做动画）
+    // 對齊到準確位置
     private alignToExactPosition() {
-        if (!this.reelContent) return;
-        const targetY = -this.bufferSymbolCount * this.symbolHeight;
-        this.reelContent.setPosition(0, targetY, 0);
+        if (this.reelContent) {
+            this.reelContent.setPosition(0, -this.bufferSymbolCount * this.symbolHeight, 0);
+        }
     }
 
-    // 更新滚动内容的显示（同步 contentSymbols -> contentSprites）
+    // 更新目前可見符號
+    private updateCurrentSymbols() {
+        const startIndex = this.bufferSymbolCount;
+        this.currentSymbols = [
+            this.contentSymbols[startIndex],
+            this.contentSymbols[startIndex + 1],
+            this.contentSymbols[startIndex + 2]
+        ];
+    }
+
+    // 更新滾動內容顯示
     private updateContentDisplay() {
         for (let i = 0; i < this.contentSymbols.length && i < this.contentSprites.length; i++) {
-            const symbol = this.contentSymbols[i];
-            const sprite = this.contentSprites[i];
-
-            if (sprite && symbol) {
-                const symbolIndex = SymbolNames.indexOf(symbol);
-                if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-                    sprite.spriteFrame = this.symbolFrames[symbolIndex];
-                }
-            }
+            this.updateSpriteFrame(this.contentSprites[i], this.contentSymbols[i]);
         }
-
-        // 更新当前可见符号
         this.updateCurrentSymbols();
     }
 
-    // 更新 Cell 显示（Reel 内部的三个 cellSprites）
+    // 更新Cell顯示
     private updateCellDisplay() {
         for (let i = 0; i < Math.min(3, this.cellSprites.length, this.currentSymbols.length); i++) {
-            const symbol = this.currentSymbols[i];
-            const cell = this.cellSprites[i];
-
-            if (cell && symbol) {
-                const symbolIndex = SymbolNames.indexOf(symbol);
-                if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-                    cell.spriteFrame = this.symbolFrames[symbolIndex];
-                }
-            }
+            this.updateSpriteFrame(this.cellSprites[i], this.currentSymbols[i]);
         }
     }
 
-    // 停止滚动动画（停止 tween）
+    // 統一的圖片更新方法
+    private updateSpriteFrame(sprite: Sprite, symbol: SymbolType) {
+        if (!sprite || !symbol) return;
+        
+        const symbolIndex = SymbolNames.indexOf(symbol);
+        if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
+            sprite.spriteFrame = this.symbolFrames[symbolIndex];
+        }
+    }
+
+    // 停止滾動動畫
     private stopRollingAnimation() {
         if (this.rollTween) {
-            try {
-                this.rollTween.stop();
-            } catch (e) { /* ignore */ }
+            try { this.rollTween.stop(); } catch (e) { /* ignore */ }
             this.rollTween = null;
         }
     }
 
-    // 设置最终结果（给还没开始滚动的滚轮使用），并可选择 onComplete callback
-    public setFinalResult(finalSymbols: SymbolType[], onComplete?: () => void): void {
-        console.log(`[Reel ${this.node.name}] setFinalResult:`, finalSymbols);
-
-        this.spinning = false;
-        this.stopFlag = true;
-        this.finalSymbols = finalSymbols;
-
-        // 停止任何动画并直接设置结果
-        this.stopRollingAnimation();
-
-        if (this.finalSymbols) {
-            this.setFinalSymbols(this.finalSymbols);
-        }
-
-        this.alignToExactPosition();
-        this.updateCellDisplay();
-
-        if (onComplete) {
-            try { onComplete(); } catch (e) { console.warn(e); }
-        }
-
-        if (this.spinPromiseResolve) {
-            try {
-                this.spinPromiseResolve([...this.currentSymbols]);
-            } catch (e) { /* ignore */ }
-            this.spinPromiseResolve = null;
-        }
-    }
-
-    // 获取当前列的三个符号（复制返回）
+    // 公共介面
     public getCurrentSymbols(): SymbolType[] {
         return [...this.currentSymbols];
     }
 
-    // 检查是否在滚动
     public isSpinning(): boolean {
         return this.spinning;
     }
 
     onDestroy() {
-        console.log(`[Reel ${this.node.name}] 销毁`);
+        console.log(`[Reel ${this.node.name}] 銷毀`);
         this.stopRollingAnimation();
         this.spinPromiseResolve = null;
     }
 }
 
-// // Reel.ts - 改良版（移除彈跳效果、立即停止/設置最終結果能同步回報完成）
-// import { _decorator, Component, Sprite, SpriteFrame, tween, Vec3, Node } from 'cc';
-// import { SymbolType, SymbolNames } from './SymbolConfig';
-
-// const { ccclass, property } = _decorator;
-
-// @ccclass('Reel')
-// export class Reel extends Component {
-//     // 可見的3個Cell（用於最終顯示和連線檢查）
-//     @property([Sprite])
-//     public cellSprites: Sprite[] = []; // 長度應為 3，對應上中下
-
-//     // 滾動容器（包含多個符號節點，用於滾動效果）
-//     @property(Node)
-//     public reelContent: Node = null!; // 滾動容器
-
-//     @property([SpriteFrame])
-//     public symbolFrames: SpriteFrame[] = [];
-
-//     // 滾動參數
-//     @property
-//     public symbolHeight: number = 250; // 每個符號的高度
-
-//     @property
-//     public visibleSymbolCount: number = 3; // 可見符號數量
-
-//     @property
-//     public bufferSymbolCount: number = 2; // 上下緩衝符號數量（確保循環滾動）
-
-//     // 滾動相關
-//     private spinning = false;
-//     private spinPromiseResolve: ((value: SymbolType[]) => void) | null = null;
-//     private rollTween: any = null;
-//     private currentSymbols: SymbolType[] = [SymbolType.A, SymbolType.B, SymbolType.C]; // 當前顯示的3個符號
-//     private contentSymbols: SymbolType[] = []; // 滾動容器中的所有符號
-//     private contentSprites: Sprite[] = []; // 滾動容器中的所有Sprite
-//     private totalSymbolCount: number = 0;
-//     private stopFlag: boolean = false;
-//     private finalSymbols: SymbolType[] | null = null;
-
-//     start() {
-//         console.log(`[Reel ${this.node.name}] 初始化開始`);
-
-//         // 檢查綁定
-//         this.checkBindings();
-
-//         // 初始化滾動容器
-//         this.initializeReelContent();
-
-//         // 初始化顯示
-//         this.updateCellDisplay();
-
-//         console.log(`[Reel ${this.node.name}] 初始化完成，當前符號:`, this.currentSymbols);
-//     }
-
-//     private checkBindings() {
-//         if (this.cellSprites.length !== 3) {
-//             console.error(`[Reel ${this.node.name}] cellSprites 必須有 3 個元素`);
-//             return;
-//         }
-
-//         if (!this.reelContent) {
-//             console.error(`[Reel ${this.node.name}] reelContent 未綁定`);
-//             return;
-//         }
-//     }
-
-//     // 初始化滾動容器
-//     private initializeReelContent() {
-//         if (!this.reelContent) return;
-
-//         this.totalSymbolCount = this.visibleSymbolCount + this.bufferSymbolCount * 2;
-
-//         // 清理現有內容
-//         this.reelContent.removeAllChildren();
-//         this.contentSprites = [];
-//         this.contentSymbols = [];
-
-//         // 創建符號節點
-//         for (let i = 0; i < this.totalSymbolCount; i++) {
-//             // 創建符號節點
-//             const symbolNode = new Node(`Symbol_${i}`);
-//             const sprite = symbolNode.addComponent(Sprite);
-
-//             // 隨機分配符號
-//             const randomSymbol = SymbolNames[Math.floor(Math.random() * SymbolNames.length)];
-//             this.contentSymbols.push(randomSymbol);
-
-//             // 設置圖片（若 symbolFrames 有對應圖）
-//             const symbolIndex = SymbolNames.indexOf(randomSymbol);
-//             if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-//                 sprite.spriteFrame = this.symbolFrames[symbolIndex];
-//             }
-
-//             // 設置位置（從上到下排列）
-//             symbolNode.setPosition(0, (this.totalSymbolCount - 1 - i) * this.symbolHeight, 0);
-
-//             this.reelContent.addChild(symbolNode);
-//             this.contentSprites.push(sprite);
-//         }
-
-//         // 設置初始位置，讓可見區域顯示中間的符號
-//         const initialY = -this.bufferSymbolCount * this.symbolHeight;
-//         this.reelContent.setPosition(0, initialY, 0);
-
-//         // 更新當前可見符號
-//         this.updateCurrentSymbols();
-//     }
-
-//     // 更新當前可見的符號
-//     private updateCurrentSymbols() {
-//         const startIndex = this.bufferSymbolCount;
-//         this.currentSymbols = [
-//             this.contentSymbols[startIndex],
-//             this.contentSymbols[startIndex + 1],
-//             this.contentSymbols[startIndex + 2]
-//         ];
-//     }
-
-//     // 開始滾動
-//     public spin(spinDuration = 1, finalSymbols?: SymbolType[]): Promise<SymbolType[]> {
-//         console.log(`[Reel ${this.node.name}] 開始滾動，預期最終:`, finalSymbols);
-
-//         this.spinning = true;
-//         this.stopFlag = false;
-//         this.finalSymbols = finalSymbols || null;
-
-//         return new Promise((resolve) => {
-//             this.spinPromiseResolve = resolve;
-
-//             // 開始連續滾動（簡單連續 tween 版本）
-//             this.startContinuousRoll();
-//         });
-//     }
-
-//     // 強制停止滾動（立即停止到 finalSymbols），接受 callback 作為完成標記
-//     public forceStop(finalSymbols?: SymbolType[], onStopComplete?: () => void): SymbolType[] {
-//         console.log(`[Reel ${this.node.name}] 強制停止（forceStop）`, finalSymbols);
-
-//         this.stopFlag = true;
-//         this.finalSymbols = finalSymbols || this.finalSymbols;
-
-//         // 停止持續滾動動畫
-//         this.stopRollingAnimation();
-
-//         // 直接把 finalSymbols 寫入可見區域並對齊位置
-//         if (this.finalSymbols) {
-//             this.setFinalSymbols(this.finalSymbols);
-//         }
-
-//         // 立刻對齊位置（不做額外動畫）
-//         this.alignToExactPosition();
-
-//         // 更新 cell 顯示（Reel 內部的三格）
-//         this.updateCellDisplay();
-
-//         // 呼叫完成回調
-//         if (onStopComplete) {
-//             try { onStopComplete(); } catch (e) { console.warn(e); }
-//         }
-
-//         // resolve spin 的 promise（若有）
-//         if (this.spinPromiseResolve) {
-//             try {
-//                 this.spinPromiseResolve([...this.currentSymbols]);
-//             } catch (e) { console.warn(e); }
-//             this.spinPromiseResolve = null;
-//         }
-
-//         // 返回當前符號
-//         return this.currentSymbols;
-//     }
-
-//     // 開始連續滾動動畫（基於 tween 的簡化實現）
-//     private startContinuousRoll() {
-//         if (!this.reelContent || this.stopFlag) return;
-
-//         // 停止之前的動畫
-//         this.stopRollingAnimation();
-
-//         // 基本連續滾動：每次滾動一小段距離並循環 symbols
-//         const rollStepDistance = this.symbolHeight / 5;
-//         const rollStepDuration = 0.04; // 秒
-
-//         const step = () => {
-//             if (this.stopFlag || !this.spinning) return;
-
-//             const currentY = this.reelContent.position.y;
-//             const newY = currentY - rollStepDistance;
-
-//             this.rollTween = tween(this.reelContent)
-//                 .to(rollStepDuration, { position: new Vec3(0, newY, 0) })
-//                 .call(() => {
-//                     // 檢查是否需要循環
-//                     this.checkAndLoopSymbols();
-
-//                     // 隨機化非可見區域的符號以模擬快速變化
-//                     this.randomizeContentSymbols();
-
-//                     // 繼續下一步
-//                     if (!this.stopFlag && this.spinning) {
-//                         step();
-//                     } else {
-//                         // 若已停止，保證最終符號已經設置（forceStop / setFinalSymbols 會處理）
-//                     }
-//                 })
-//                 .start();
-//         };
-
-//         step();
-//     }
-
-//     // 檢查並循環符號位置
-//     private checkAndLoopSymbols() {
-//         if (!this.reelContent) return;
-
-//         const currentY = this.reelContent.position.y;
-//         const threshold = -this.symbolHeight * (this.bufferSymbolCount + 1);
-
-//         // 如果滾動超過閾值，重置位置並循環符號
-//         if (currentY <= threshold) {
-//             const resetY = currentY + this.symbolHeight;
-//             this.reelContent.setPosition(0, resetY, 0);
-
-//             // 循環符號：將最上面的符號移到最下面
-//             this.cycleSymbols();
-//         }
-//     }
-
-//     // 循環符號內容
-//     private cycleSymbols() {
-//         if (this.contentSymbols.length === 0) return;
-
-//         // 將第一個符號移到最後
-//         const firstSymbol = this.contentSymbols.shift();
-//         if (firstSymbol) {
-//             this.contentSymbols.push(firstSymbol);
-//         }
-
-//         // 更新顯示
-//         this.updateContentDisplay();
-//     }
-
-//     // 隨機化滾動內容中的符號（模擬快速變化）
-//     private randomizeContentSymbols() {
-//         for (let i = 0; i < this.contentSymbols.length; i++) {
-//             // 只隨機化非可見區域的符號
-//             if (i < this.bufferSymbolCount || i >= this.bufferSymbolCount + this.visibleSymbolCount) {
-//                 this.contentSymbols[i] = SymbolNames[Math.floor(Math.random() * SymbolNames.length)];
-//             }
-//         }
-//         this.updateContentDisplay();
-//     }
-
-//     // 停止滾動並設置最終結果（由未開始滾動的 reel 呼叫）
-//     private stopRolling(onStopComplete?: () => void) {
-//         console.log(`[Reel ${this.node.name}] stopRolling called, final:`, this.finalSymbols);
-
-//         this.spinning = false;
-//         this.stopFlag = true;
-//         this.stopRollingAnimation();
-
-//         if (this.finalSymbols) {
-//             this.setFinalSymbols(this.finalSymbols);
-//         }
-
-//         // 直接對齊位置並更新顯示（移除任何彈跳與減速動畫）
-//         this.alignToExactPosition();
-//         this.updateCellDisplay();
-
-//         if (onStopComplete) {
-//             onStopComplete();
-//         }
-
-//         if (this.spinPromiseResolve) {
-//             this.spinPromiseResolve([...this.currentSymbols]);
-//             this.spinPromiseResolve = null;
-//         }
-//     }
-
-//     // 設置最終符號並調整可見區域內容
-//     private setFinalSymbols(symbols: SymbolType[]) {
-//         if (symbols.length !== 3) return;
-
-//         const startIndex = this.bufferSymbolCount;
-//         for (let i = 0; i < 3; i++) {
-//             this.contentSymbols[startIndex + i] = symbols[i];
-//         }
-
-//         this.currentSymbols = [...symbols];
-//         this.updateContentDisplay();
-//     }
-
-//     // 對齊到準確位置（直接設定，不做動畫）
-//     private alignToExactPosition() {
-//         if (!this.reelContent) return;
-//         const targetY = -this.bufferSymbolCount * this.symbolHeight;
-//         this.reelContent.setPosition(0, targetY, 0);
-//     }
-
-//     // 更新滾動內容的顯示（同步 contentSymbols -> contentSprites）
-//     private updateContentDisplay() {
-//         for (let i = 0; i < this.contentSymbols.length && i < this.contentSprites.length; i++) {
-//             const symbol = this.contentSymbols[i];
-//             const sprite = this.contentSprites[i];
-
-//             if (sprite && symbol) {
-//                 const symbolIndex = SymbolNames.indexOf(symbol);
-//                 if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-//                     sprite.spriteFrame = this.symbolFrames[symbolIndex];
-//                 }
-//             }
-//         }
-
-//         // 更新當前可見符號
-//         this.updateCurrentSymbols();
-//     }
-
-//     // 更新 Cell 顯示（Reel 內部的三個 cellSprites）
-//     private updateCellDisplay() {
-//         for (let i = 0; i < Math.min(3, this.cellSprites.length, this.currentSymbols.length); i++) {
-//             const symbol = this.currentSymbols[i];
-//             const cell = this.cellSprites[i];
-
-//             if (cell && symbol) {
-//                 const symbolIndex = SymbolNames.indexOf(symbol);
-//                 if (symbolIndex >= 0 && this.symbolFrames[symbolIndex]) {
-//                     cell.spriteFrame = this.symbolFrames[symbolIndex];
-//                 }
-//             }
-//         }
-//     }
-
-//     // 停止滾動動畫（停止 tween）
-//     private stopRollingAnimation() {
-//         if (this.rollTween) {
-//             try {
-//                 this.rollTween.stop();
-//             } catch (e) { /* ignore */ }
-//             this.rollTween = null;
-//         }
-//     }
-
-//     // 設置最終結果（給還沒開始滾動的滾輪使用），並可選擇 onComplete callback
-//     public setFinalResult(finalSymbols: SymbolType[], onComplete?: () => void): void {
-//         console.log(`[Reel ${this.node.name}] setFinalResult:`, finalSymbols);
-
-//         this.spinning = false;
-//         this.stopFlag = true;
-//         this.finalSymbols = finalSymbols;
-
-//         // 停止任何動畫並直接設置結果
-//         this.stopRollingAnimation();
-
-//         if (this.finalSymbols) {
-//             this.setFinalSymbols(this.finalSymbols);
-//         }
-
-//         this.alignToExactPosition();
-//         this.updateCellDisplay();
-
-//         if (onComplete) {
-//             try { onComplete(); } catch (e) { console.warn(e); }
-//         }
-
-//         if (this.spinPromiseResolve) {
-//             try {
-//                 this.spinPromiseResolve([...this.currentSymbols]);
-//             } catch (e) { /* ignore */ }
-//             this.spinPromiseResolve = null;
-//         }
-//     }
-
-//     // 獲取當前列的三個符號（複製返回）
-//     public getCurrentSymbols(): SymbolType[] {
-//         return [...this.currentSymbols];
-//     }
-
-//     // 檢查是否在滾動
-//     public isSpinning(): boolean {
-//         return this.spinning;
-//     }
-
-//     onDestroy() {
-//         console.log(`[Reel ${this.node.name}] 銷毀`);
-//         this.stopRollingAnimation();
-//         this.spinPromiseResolve = null;
-//     }
-// }
