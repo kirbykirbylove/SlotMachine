@@ -53,7 +53,7 @@ export class GameManager extends Component {
     private spinTimeouts: number[] = [];
     private lastWins: WinLine[] = [];
     private singleLineInterval: number | null = null;
-    private stopImmediatelyDelayBetweenReels = 0.18;
+    private stopImmediatelyDelayBetweenReels = 0.2;
 
     start() {
         console.log('[GameManager] 初始化開始');
