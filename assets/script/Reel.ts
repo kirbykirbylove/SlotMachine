@@ -1,4 +1,4 @@
-// Reel.ts - 最終優化版（精簡但保持所有功能）
+// Reel.ts
 import { _decorator, Component, Sprite, SpriteFrame, tween, Vec3, Node } from 'cc';
 import { SymbolType, SymbolNames } from './SymbolConfig';
 

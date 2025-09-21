@@ -1,4 +1,4 @@
-// GameManager.ts - 精簡健壯版
+// GameManager.ts
 import { _decorator, Component, Sprite, SpriteFrame, EditBox, Button, Label } from 'cc';
 import { Reel } from './Reel';
 import { UIManager } from './UIManager';
